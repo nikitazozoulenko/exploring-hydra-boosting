@@ -1,0 +1,11 @@
+tqdm
+numpy
+matplotlib
+plotly
+pandas
+scikit-learn
+torch
+torchvision
+torchaudio
+aeon
+tsml-eval
