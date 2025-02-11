@@ -9,7 +9,7 @@ import torch.utils.data
 from torch import Tensor
 
 from models.sandwiched_least_squares import sandwiched_LS_dense, sandwiched_LS_diag, sandwiched_LS_scalar
-from models.base import FittableModule, RidgeModule, RidgeCVModule, FittableSequential, Identity, LogisticRegression
+from models.base import FittableModule, RidgeModule, FittableSequential, Identity, LogisticRegression
 
 
 
@@ -47,7 +47,7 @@ class GhatBoostingLayer(nn.Module):
 class BaseGRFRBoost(FittableModule):
     def __init__(
             self,
-            n_layers: int, # TODO switch
+            n_layers: int,
             initial_representation: nn.Module,
             top_level_modules: List[FittableModule],
             random_feature_layers: List[RandomFeatureLayer],
@@ -91,20 +91,21 @@ class BaseGRFRBoost(FittableModule):
             # Create top level regressor or classifier W_0
             if 0 in self.train_top_at:
                 self.top_level_modules[0].fit(X, y)
+                print("training W0")
+                print("Phi0 shape", X.shape)
 
             # Feature boost
-            for t in range(1, self.n_layers+1):
+            for t in range(self.n_layers):
                 # Step 1: Create random feature layer
                 F = self.random_feature_layers[t].fit_transform(X, X0, y)
                 # Step 2: Greedily or Gradient boost to minimize R(W_t, Phi_t + Delta F)
                 Ghat = self.ghat_boosting_layers[t].fit_transform(F, X, y, self.top_level_modules[t])
                 X = X + self.boost_lr * Ghat
-                X = self.batchnorms[t](X)
                 # Step 3: Learn top level classifier W_t
                 if t in self.train_top_at:
-                    self.top_level_modules[t].fit(X, y)
+                    self.top_level_modules[t+1].fit(X, y)
                 else:
-                    self.top_level_modules[t] = self.top_level_modules[t-1]
+                    self.top_level_modules[t+1] = self.top_level_modules[t]
 
         return self
 
@@ -147,26 +148,27 @@ class RandomFeatureLayer(nn.Module, abc.ABC):
 
 
 
-# TODO TODO TODO i am here
 from aeon.transformations.collection.convolution_based import HydraTransformer
-
-class RandFeatLayer(RandomFeatureLayer):
+class HydraLayer(RandomFeatureLayer):
     def __init__(self, 
-                    n_kernels = 8,
-                    n_groups = 64,
-                    max_num_channels = 3,
-                 ):
+                n_kernels = 8,
+                n_groups = 64,
+                max_num_channels = 3,
+                hydra_batch_size = 512
+            ):
+        self.hydra_batch_size = hydra_batch_size
         self.hydra = HydraTransformer(
-            n_kernels = 8,
-            n_groups = 64,
-            max_num_channels = 3,
+            n_kernels,
+            n_groups,
+            max_num_channels,
             ) 
-        super(RandFeatLayer, self).__init__()
+        super(HydraLayer, self).__init__()
 
 
     def fit(self, Xt: Tensor, X0: Tensor, y: Tensor) -> Tensor:
         """Note that SWIM requires y to be onehot or binary"""
-        self.hydra.fit(X0)  
+        with torch.no_grad():
+            self.hydra.fit(X0)
         return self
 
 
@@ -176,17 +178,13 @@ class RandFeatLayer(RandomFeatureLayer):
     
 
     def forward(self, Xt: Tensor, X0: Tensor) -> Tensor:
-        return self.hydra.transform(X0)
-        # features = []
-        # if self.randfeat_xt_dim > 0:
-        #     features.append(self.Ft(Xt))
-        # if self.randfeat_x0_dim > 0:
-        #     features.append(self.F0(X0))
-
-        # if self.add_features:
-        #     return sum(features)
-        # else:
-        #     return torch.cat(features, dim=1)
+        with torch.no_grad():
+            feats = [
+                self.hydra.transform(batch.numpy()) #TODO replace without aeon
+                for batch in torch.split(X0, self.hydra_batch_size)
+                ]
+            feats = torch.concat(feats, dim=0)
+        return feats
 
 
 
@@ -231,48 +229,60 @@ class GhatGradientLayerMSE(GhatBoostingLayer):
 
     def forward(self, F: Tensor) -> Tensor:
         return self.linesearch * self.ridge(F)
+    
+    
+    
+    
+#################################
+#### Initial feature layer ######
+#################################
+
+class InitialHydra(FittableModule):
+    def __init__(self,
+                 n_kernels = 8,
+                 n_groups = 64,
+                 max_num_channels = 3,
+                 hydra_batch_size = 512,
+                 ):
+        super(InitialHydra, self).__init__()
+        self.hydralayer = HydraLayer(n_kernels, n_groups, max_num_channels, hydra_batch_size) 
+        
+    def fit(self, X: Tensor, y: Any):
+        self.hydralayer.fit(None, X, y)
+        
+    def forward(self, X: Tensor):
+        return self.hydralayer(None, X)
+        
 
 
 ############################################################################
 ################# Random Feature Representation Boosting for Regression ###################
 ############################################################################
 
-# TODO i might need to fix how the ridge is fitted, i cant give out_dim at initialization
-class GradientRFRBoostRegressor(BaseGRFRBoost):
+
+class HydraBoost(BaseGRFRBoost):
     def __init__(self,
                  n_layers: int = 5,
+                 init_n_kernels = 16,
+                 init_n_groups = 16,
                  n_kernels = 8,
                  n_groups = 64,
                  max_num_channels = 3,
+                 hydra_batch_size = 512,
                  l2_reg: float = 0.0001,
                  l2_ghat: float = 0.0001,
                  boost_lr: float = 0.1,
                  train_top_at: List[int] = [0, 5, 10],
                  return_features: bool = False,  #logits or features
+                 #TODO ghat_method: Literal["solve", "lbfgs", "adam"]
                  ):
 
-        # TODO 'upscale'
-        upscale = Upscale(in_dim, hidden_dim, upscale_type, iid_scale, SWIM_scale,
-                          activation if feature_type=="SWIM" else nn.Tanh())
-
-        # top level regressors TODO check with 'out_dim'
+        initial_layer = InitialHydra(init_n_kernels, init_n_groups, max_num_channels, hydra_batch_size)
         top_level_regs = [RidgeModule(l2_reg) for _ in range(n_layers+1)]
-
-        # random feature layers TODO change to new hydra features
-        random_feature_layers = [
-            RandFeatLayer(in_dim, hidden_dim, randfeat_xt_dim, randfeat_x0_dim, feature_type,
-                          iid_scale, SWIM_scale, activation, add_features)
-            for _ in range(n_layers)
-        ]
-
-        # ghat boosting layers
-        ghat_boosting_layers = [
-            GhatGradientLayerMSE(l2_ghat)
-            for _ in range(n_layers)
-        ]
-
-        super(GradientRFRBoostRegressor, self).__init__(
-            n_layers, upscale, top_level_regs, random_feature_layers, ghat_boosting_layers, boost_lr, train_top_at, return_features
+        random_feature_layers = [HydraLayer(n_kernels, n_groups, max_num_channels, hydra_batch_size) for _ in range(n_layers)]
+        ghat_boosting_layers = [GhatGradientLayerMSE(l2_ghat) for _ in range(n_layers)]
+        super(HydraBoost, self).__init__(
+            n_layers, initial_layer, top_level_regs, random_feature_layers, ghat_boosting_layers, boost_lr, train_top_at, return_features
         )
 
 
