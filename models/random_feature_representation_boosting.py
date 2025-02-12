@@ -148,7 +148,8 @@ class RandomFeatureLayer(nn.Module, abc.ABC):
 
 
 
-from aeon.transformations.collection.convolution_based import HydraTransformer
+from models.hydra import HydraGPU, HydraMultivariateGPU, RobustSparseScaler
+
 class HydraLayer(RandomFeatureLayer):
     def __init__(self, 
                 n_kernels = 8,
@@ -156,36 +157,44 @@ class HydraLayer(RandomFeatureLayer):
                 max_num_channels = 3,
                 hydra_batch_size = 512
             ):
+        self.n_kernels = n_kernels
+        self.n_groups = n_groups
+        self.max_num_channels = max_num_channels
         self.hydra_batch_size = hydra_batch_size
-        self.hydra = HydraTransformer(
-            n_kernels,
-            n_groups,
-            max_num_channels,
-            ) 
+        self.hydra = None
+        self.robust_scaler = None
         super(HydraLayer, self).__init__()
 
 
-    def fit(self, Xt: Tensor, X0: Tensor, y: Tensor) -> Tensor:
-        """Note that SWIM requires y to be onehot or binary"""
-        with torch.no_grad():
-            self.hydra.fit(X0)
-        return self
-
-
     def fit_transform(self, Xt, X0, y):
-        self.fit(Xt, X0, y)
-        return self.forward(Xt, X0)
+        with torch.no_grad():
+            N, D, T = X0.size()
+            #initialize Hydra
+            if D == 1:
+                self.hydra = HydraGPU(X0.size(2), self.n_kernels, self.n_groups)
+            else:
+                self.hydra = HydraMultivariateGPU(X0.size(2), D, self.n_kernels, self.n_groups, self.max_num_channels)
+
+            #fit robust sparse scaler after forwarding training data
+            self.robust_scaler = RobustSparseScaler()
+            feats = self._forward_no_scaler(X0)
+            feats = self.robust_scaler.fit_transform(feats)
+        return feats
     
 
-    def forward(self, Xt: Tensor, X0: Tensor) -> Tensor:
+    def _forward_no_scaler(self, X0: Tensor) -> Tensor:
         with torch.no_grad():
             feats = [
-                self.hydra.transform(batch.numpy()) #TODO replace without aeon
+                self.hydra(batch)
                 for batch in torch.split(X0, self.hydra_batch_size)
                 ]
             feats = torch.concat(feats, dim=0)
         return feats
-
+    
+    
+    def forward(self, Xt: Tensor, X0: Tensor) -> Tensor:
+        feats = self._forward_no_scaler(X0)
+        return self.robust_scaler.transform(feats)
 
 
 
@@ -247,8 +256,8 @@ class InitialHydra(FittableModule):
         super(InitialHydra, self).__init__()
         self.hydralayer = HydraLayer(n_kernels, n_groups, max_num_channels, hydra_batch_size) 
         
-    def fit(self, X: Tensor, y: Any):
-        self.hydralayer.fit(None, X, y)
+    def fit_transform(self, X: Tensor, y: Any):
+        return self.hydralayer.fit_transform(None, X, y)
         
     def forward(self, X: Tensor):
         return self.hydralayer(None, X)
