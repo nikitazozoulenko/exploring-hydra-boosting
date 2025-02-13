@@ -278,8 +278,8 @@ class HydraBoost(BaseGRFRBoost):
                  n_groups = 64,
                  max_num_channels = 3,
                  hydra_batch_size = 512,
-                 l2_reg: float = 0.0001,
-                 l2_ghat: float = 0.0001,
+                 l2_reg: float = 10,
+                 l2_ghat: float = 10,
                  boost_lr: float = 0.1,
                  train_top_at: List[int] = [0, 5, 10],
                  return_features: bool = False,  #logits or features

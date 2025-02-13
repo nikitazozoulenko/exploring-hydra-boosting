@@ -1,11 +1,12 @@
 tqdm
-numpy
+numpy=1.26.4
 matplotlib
 plotly
-pandas
-scikit-learn
+pandas=2.0.3
+scikit-learn=1.4.2
+scipy=1.12.0
 torch
 torchvision
 torchaudio
-aeon
-tsml-eval
+aeon=0.11.0
+tsml-eval=0.4.0

@@ -54,7 +54,7 @@ def load_mosquitosound(
             entry = entry.tolist()
             X += [entry[:-1]]
             y += [entry[-1]]
-        X = np.array(X, dtype=np.float32)[:, None, :]
+        X = np.array(X)[:, None, :]
         
         # Convert labels to integers
         if postfix == "TRAIN":
@@ -62,7 +62,6 @@ def load_mosquitosound(
         else:
             # Use same label mapping as training set
             y = np.searchsorted(unique_classes, y)
-        y = y.astype(np.int32)
         
         # Save results
         np.save(cache_files[postfix]["X"], X)
@@ -85,8 +84,8 @@ def get_aeon_dataset(
     ):
     """
     Loads a dataset from the UCR/UEA archive using the aeon library.
-    Time series array shape is (N, D, T), dtype float32.
-    Targets are float32 for regression and int32 labels in [0, ..., C-1].
+    Time series array shape is (N, D, T), dtype float64.
+    Targets are float64 for regression and int64 labels in [0, ..., C-1].
     Data is not preprocessed.
 
     Returns:
@@ -99,17 +98,12 @@ def get_aeon_dataset(
         X_test, y_test = load_regression(dataset_name, split="test", extract_path=extract_path)
         
         # make correct dtypes
-        X_train = X_train.astype(np.float32)
-        X_test = X_test.astype(np.float32)
         if regression_or_classification == "classification":
             unique_classes, y_train = np.unique(y_train, return_inverse=True)
             y_test = np.searchsorted(unique_classes, y_test)
-            y_train = y_train.astype(np.int32)
-            y_test = y_test.astype(np.int32)
-        elif regression_or_classification == "regression":
-            y_train = y_train.astype(np.float32)
-            y_test = y_test.astype(np.float32)
-        else:
+            y_train = y_train.astype(np.int64)
+            y_test = y_test.astype(np.int64)
+        elif regression_or_classification != "regression":
             raise RuntimeError(f"invalid argument for regression_or_classification: '{regression_or_classification}'")
         
         return X_train, y_train, X_test, y_test
@@ -155,3 +149,110 @@ def get_dataset_metadata_df(
     df = pd.DataFrame.from_dict(metadata_dict, orient='index')
     df.to_csv(cache_path)
     return df
+
+
+
+
+
+
+
+
+
+
+
+
+
+# import requests
+# from bs4 import BeautifulSoup
+# import os
+
+# def download_files(
+#         base_url: str, 
+#         target_dirs: List[str], 
+#         root_files: List[str] = [], 
+#         save_path: str = "downloaded_files"
+#     ):
+#     """
+#     Downloads files from a website with a nested directory structure.
+
+#     Args:
+#         base_url: The base URL of the website.
+#         target_dirs: A list of directories to download files from.
+#         root_files: A list of files to download from the root directory.
+#         save_path: The local path to save the downloaded files.
+#     """
+
+#     response = requests.get(base_url)
+#     response.raise_for_status()  # Raise an exception for bad status codes
+
+#     soup = BeautifulSoup(response.content, 'html.parser')
+
+#     # Create a directory to store downloaded files
+#     if not os.path.exists(save_path):
+#         os.makedirs(save_path)
+
+#     # Download files from the root directory
+#     for file_name in root_files:
+#         file_url = base_url + file_name
+#         download_file(file_url, save_path)
+
+#     # Find all links to directories
+#     for link in soup.find_all('a', href=True):
+#         dir_name = link['href']
+#         if dir_name.endswith('/') and dir_name[:-1] in target_dirs:
+#             dir_url = base_url + dir_name
+#             download_files_in_dir(dir_url, os.path.join(save_path, dir_name[:-1]))
+
+# def download_files_in_dir(dir_url, save_path):
+#     """
+#     Downloads all CSV files within a specific directory.
+
+#     Args:
+#         dir_url: The URL of the directory.
+#         save_path: The local path to save the downloaded files.
+#     """
+
+#     response = requests.get(dir_url)
+#     response.raise_for_status()
+
+#     soup = BeautifulSoup(response.content, 'html.parser')
+
+#     if not os.path.exists(save_path):
+#         os.makedirs(save_path)
+
+#     for link in soup.find_all('a', href=True):
+#         file_name = link['href']
+#         if file_name.endswith('.csv'):
+#             file_url = dir_url + file_name
+#             download_file(file_url, save_path)
+
+# def download_file(file_url, save_path):
+#     """
+#     Downloads a single file.
+
+#     Args:
+#         file_url: The URL of the file to download.
+#         save_path: The local path to save the downloaded file.
+#     """
+
+#     try:
+#         response = requests.get(file_url, stream=True)
+#         response.raise_for_status()
+
+#         file_name = os.path.basename(file_url)
+#         local_file_path = os.path.join(save_path, file_name)
+
+#         with open(local_file_path, 'wb') as f:
+#             for chunk in response.iter_content(chunk_size=8192):
+#                 f.write(chunk)
+
+#         print(f"Downloaded: {file_name}")
+#     except requests.exceptions.RequestException as e:
+#         print(f"Error downloading {file_url}: {e}")
+
+# # download_files(
+# #     base_url = "https://timeseriesclassification.com/results/ReferenceResults/regression/", 
+# #     target_dirs = ["fittime", "mae", "mape", "mse", "predicttime", "r2", "rmse"], 
+# #     root_files = ["estimators.txt"],
+# #     save_path = "data/bench_regression_TSER/regression"
+# #     )
