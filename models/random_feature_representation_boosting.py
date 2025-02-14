@@ -9,7 +9,7 @@ import torch.utils.data
 from torch import Tensor
 
 from models.sandwiched_least_squares import sandwiched_LS_dense, sandwiched_LS_diag, sandwiched_LS_scalar
-from models.base import FittableModule, RidgeModule, FittableSequential, Identity, LogisticRegression
+from models.base import FittableModule, RidgeModule, RidgeLBFGS, RidgeAdamW, FittableSequential, Identity, LogisticRegression
 
 
 
@@ -102,7 +102,7 @@ class BaseGRFRBoost(FittableModule):
                 Ghat = self.ghat_boosting_layers[t].fit_transform(F, X, y, self.top_level_modules[t])
                 X = X + self.boost_lr * Ghat
                 # Step 3: Learn top level classifier W_t
-                if t in self.train_top_at:
+                if t+1 in self.train_top_at:
                     self.top_level_modules[t+1].fit(X, y)
                 else:
                     self.top_level_modules[t+1] = self.top_level_modules[t]
@@ -198,50 +198,6 @@ class HydraLayer(RandomFeatureLayer):
 
 
 
-############################################################################
-#################    Ghat layer, Gradient Boosting Regression       ########
-############################################################################
-
-
-class GhatGradientLayerMSE(GhatBoostingLayer):
-    def __init__(self,
-                 l2_ghat: float = 0.01,
-                 ):
-        self.l2_ghat = l2_ghat
-        super(GhatGradientLayerMSE, self).__init__()
-        self.ridge = RidgeModule(l2_ghat)
-
-
-    def fit_transform(self, F: Tensor, Xt: Tensor, y: Tensor, auxiliary_reg: RidgeModule) -> Tensor:
-        """Fits the functional gradient given features, resnet neurons, and targets,
-        and returns the gradient predictions
-
-        Args:
-            F (Tensor): Features, shape (N, p)
-            Xt (Tensor): ResNet neurons, shape (N, D)
-            y (Tensor): Targets, shape (N, d)
-            auxiliary_reg (RidgeModule): Auxiliary top level regressor.
-        """
-        # compute negative gradient, L_2(mu_N) normalized
-        N = y.size(0)
-        r = y - auxiliary_reg(Xt)
-        G = r @ auxiliary_reg.W.T
-        G = G / torch.norm(G) * N**0.5
-
-        # fit to negative gradient (finding functional direction)
-        Ghat = self.ridge.fit_transform(F, G)
-
-        # line search closed form risk minimization of R(W_t, Phi_{t+1})
-        self.linesearch = sandwiched_LS_scalar(r, auxiliary_reg.W, Ghat, 1e-5)
-        return Ghat * self.linesearch
-    
-
-    def forward(self, F: Tensor) -> Tensor:
-        return self.linesearch * self.ridge(F)
-    
-    
-    
-    
 #################################
 #### Initial feature layer ######
 #################################
@@ -262,6 +218,54 @@ class InitialHydra(FittableModule):
     def forward(self, X: Tensor):
         return self.hydralayer(None, X)
         
+        
+        
+
+
+############################################################################
+#################    Ghat layer, Gradient Boosting Regression       ########
+############################################################################
+
+
+class GhatGradientLayerMSE(GhatBoostingLayer):
+    def __init__(self,
+                 ridge: FittableModule,
+                 ):
+        super(GhatGradientLayerMSE, self).__init__()
+        self.ridge = ridge
+
+
+    def fit_transform(self, F: Tensor, Xt: Tensor, y: Tensor, auxiliary_reg: RidgeModule) -> Tensor:
+        """Fits the functional gradient given features, resnet neurons, and targets,
+        and returns the gradient predictions
+
+        Args:
+            F (Tensor): Features, shape (N, p)
+            Xt (Tensor): ResNet neurons, shape (N, D)
+            y (Tensor): Targets, shape (N, d)
+            auxiliary_reg (RidgeModule): Auxiliary top level regressor.
+        """
+        # compute negative gradient, L_2(mu_N) normalized
+        N = y.size(0)
+        r = y - auxiliary_reg(Xt)
+        G = r @ auxiliary_reg.linear.weight
+        G = G / torch.norm(G) * N**0.5
+
+        # fit to negative gradient (finding functional direction)
+        Ghat = self.ridge.fit_transform(F, G)
+
+        # line search closed form risk minimization of R(W_t, Phi_{t+1})
+        self.linesearch = sandwiched_LS_scalar(r, auxiliary_reg.linear.weight.T, Ghat, 1e-5)
+        return Ghat * self.linesearch
+    
+
+    def forward(self, F: Tensor) -> Tensor:
+        return self.linesearch * self.ridge(F)
+    
+    
+    
+    
+
 
 
 ############################################################################
@@ -283,13 +287,30 @@ class HydraBoost(BaseGRFRBoost):
                  boost_lr: float = 0.1,
                  train_top_at: List[int] = [0, 5, 10],
                  return_features: bool = False,  #logits or features
-                 #TODO ghat_method: Literal["solve", "lbfgs", "adam"]
+                 ridge_solver: Literal["solve", "LBFGS", "AdamW"] = "solve",
+                 lr_ridge = 1,
+                 max_iter_ridge = 300,
                  ):
+        
+        if ridge_solver.lower()=="solve".lower():
+            RidgeClass = RidgeModule
+        elif ridge_solver.lower()=="LBFGS".lower():
+            RidgeClass = RidgeLBFGS
+        elif ridge_solver.lower()=="AdamW".lower():
+            RidgeClass = RidgeAdamW
+        else:
+            raise RuntimeError(f"Invalid argument for ridge_solver. Given: {ridge_solver}")
 
         initial_layer = InitialHydra(init_n_kernels, init_n_groups, max_num_channels, hydra_batch_size)
-        top_level_regs = [RidgeModule(l2_reg) for _ in range(n_layers+1)]
+        top_level_regs = [RidgeClass(l2_reg, 
+                                     lr=lr_ridge, 
+                                     max_iter=max_iter_ridge) 
+                          for _ in range(n_layers+1)]
         random_feature_layers = [HydraLayer(n_kernels, n_groups, max_num_channels, hydra_batch_size) for _ in range(n_layers)]
-        ghat_boosting_layers = [GhatGradientLayerMSE(l2_ghat) for _ in range(n_layers)]
+        ghat_boosting_layers = [GhatGradientLayerMSE(RidgeClass(l2_ghat,
+                                                                lr=lr_ridge,
+                                                                max_iter=max_iter_ridge)) 
+                                for _ in range(n_layers)]
         super(HydraBoost, self).__init__(
             n_layers, initial_layer, top_level_regs, random_feature_layers, ghat_boosting_layers, boost_lr, train_top_at, return_features
         )

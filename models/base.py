@@ -80,37 +80,218 @@ FittableSequential = make_fittable(nn.Sequential)
 
 
 class RidgeModule(FittableModule):
-    def __init__(self, l2_reg: float = 1e-3):
+    def __init__(self, l2_reg: float = 1e-3, **kw_args):
         super(RidgeModule, self).__init__()
         self.l2_reg = l2_reg
-        self.W = None
-        self.b = None
+        
     
     def fit(self, X: Tensor, y: Tensor, **kwargs):
-        """Fit the Ridge model with a fixed l2_reg"""
-        X_mean = X.mean(dim=0, keepdim=True)
-        y_mean = y.mean(dim=0, keepdim=True)
-        X_centered = X - X_mean
-        y_centered = y - y_mean
+        """Fit the Ridge model with a fixed l2_reg.
+        Assumes X is of appropriate scale"""
+        self.X_mean = X.mean(dim=0, keepdim=True)
+        self.y_mean = y.mean(dim=0, keepdim=True)
+        self.y_std = torch.clamp(y.std(dim=0, keepdim=True), 1e-6)
         
-        N = X.size(0)
-        A = X_centered.T @ X_centered + self.l2_reg * N * torch.eye(X.size(1), dtype=X.dtype, device=X.device)
-        B = X_centered.T @ y_centered
-        self.W = torch.linalg.solve(A, B)
-        self.b = y_mean - (X_mean @ self.W)
+        # Only center X, normalize y
+        X_centered = X - self.X_mean
+        y_normalized = (y - self.y_mean) / self.y_std
+        
+        # Create linear layer
+        N, D = X.shape
+        N, d = y.shape
+        self.linear = nn.Linear(D, d, bias=False)
+        
+        # Solve the ridge regression
+        A = X_centered.T @ X_centered + self.l2_reg * N * torch.eye(D, dtype=X.dtype, device=X.device)
+        B = X_centered.T @ y_normalized
+        self.linear.weight.data = torch.linalg.solve(A, B).T
+        
+        # Compute bias term accounting for y's normalization
+        self.b = self.y_mean - (self.X_mean @ self.linear.weight.T) * self.y_std
+        print("W", self.linear.weight)
+        print("b", self.b)
+        print("self.X_mean", self.X_mean)
+        print("self.y_mean", self.y_mean)
+        print("self.y_std", self.y_std)
         return self
     
+    
     def forward(self, X: Tensor) -> Tensor:
-        return X @ self.W + self.b
+        return (self.linear(X-self.X_mean) * self.y_std) + self.b
+    
+    
+
+class RidgeLBFGS(FittableModule):
+    def __init__(self, 
+                 l2_reg: float = 1e-1,
+                 lr: float = 0.1,
+                 max_iter: int = 300,
+                 batch_size: int = 32,
+                 ):
+        super(RidgeLBFGS, self).__init__()
+        self.l2_reg = l2_reg
+        self.lr = lr
+        self.max_iter = max_iter
+        self.batch_size = batch_size
+    
+    
+    def fit(self, 
+            X: Tensor,
+            y: Tensor, 
+            init_top: Optional[FittableModule] = None,
+            **kwargs):
+        """Fit the Ridge model with a fixed l2_reg"""
+        self.X_mean = X.mean(dim=0, keepdim=True)
+        self.y_mean = y.mean(dim=0, keepdim=True)
+        self.y_std = torch.clamp(y.std(dim=0, keepdim=True), 1e-6)
+        
+        # Center X, normalize y with std
+        X_centered = X - self.X_mean
+        y_normalized = (y - self.y_mean) / self.y_std
+        
+        # Create linear layer
+        N, D = X.shape
+        N, d = y.shape
+        self.linear = nn.Linear(D, d, bias=False)
+        if init_top is not None:
+            self.linear.weight.data = init_top.linear.weight.data.clone()
+        
+        # Train
+        with torch.enable_grad():
+            optimizer = torch.optim.LBFGS(self.linear.parameters(), lr=self.lr, max_iter=self.max_iter)
+            def closure():
+                optimizer.zero_grad()
+                loss = torch.nn.functional.mse_loss(
+                    self.linear(X_centered), y_normalized
+                )
+                loss += self.l2_reg * torch.norm(self.linear.weight)**2
+                loss.backward()
+                print("loss", loss)
+                return loss
+            optimizer.step(closure)
+
+        # Compute bias term accounting for y's normalization
+        self.b = self.y_mean - (self.X_mean @ self.linear.weight.T) * self.y_std
+        print("W", self.linear.weight)
+        print("b", self.b)
+        print("self.X_mean", self.X_mean)
+        print("self.y_mean", self.y_mean)
+        print("self.y_std", self.y_std)
+        return self
+    
+    
+    def forward(self, X: Tensor) -> Tensor:
+        return (self.linear(X-self.X_mean) * self.y_std) + self.b
 
 
 
-class LogisticRegressionSGD(FittableModule):
+
+
+class RidgeAdamW(FittableModule):
+    def __init__(self, 
+                 l2_reg: float = 1e-1,
+                 lr: float = 0.1,
+                 max_iter: int = 300,
+                 batch_size: int = 1000,
+                 tol: float = 1e-4,  # Relative tolerance for early stopping
+                 patience: int = 20,   # Number of epochs to wait for improvement
+                 ):
+        super(RidgeAdamW, self).__init__()
+        self.l2_reg = l2_reg
+        self.lr = lr
+        self.max_iter = max_iter
+        self.batch_size = batch_size
+        self.tol = tol
+        self.patience = patience
+    
+    def fit(self, 
+            X: Tensor,
+            y: Tensor, 
+            init_top: Optional[FittableModule] = None,
+            **kwargs):
+        """Fit the Ridge model with a fixed l2_reg"""
+        self.X_mean = X.mean(dim=0, keepdim=True)
+        self.y_mean = y.mean(dim=0, keepdim=True)
+        self.y_std = torch.clamp(y.std(dim=0, keepdim=True), 1e-6)
+        
+        # Center X, normalize y with std
+        X_centered = X - self.X_mean
+        y_normalized = (y - self.y_mean) / self.y_std
+        
+        # Create linear layer
+        N, D = X.shape
+        N, d = y.shape
+        self.linear = nn.Linear(D, d, bias=False)
+        if init_top is not None:
+            self.linear.weight.data = init_top.linear.weight.data.clone()
+        
+        # Create DataLoader
+        dataset = torch.utils.data.TensorDataset(X_centered, y_normalized)
+        loader = torch.utils.data.DataLoader(
+            dataset, 
+            batch_size=self.batch_size,
+            shuffle=True
+        )
+
+        # Early stopping variables
+        best_loss = float("inf")
+        best_weights = None
+        patience_counter = 0
+        
+        # Train
+        with torch.enable_grad():
+            optimizer = torch.optim.Adam(self.linear.parameters(), 
+                                        lr=self.lr, 
+                                        weight_decay=2*self.l2_reg)
+            
+            for epoch in range(self.max_iter):
+                epoch_loss = 0.0
+                for batch_X, batch_y in loader:
+                    optimizer.zero_grad()
+                    outputs = self.linear(batch_X)
+                    loss = torch.nn.functional.mse_loss(outputs, batch_y)  # todo is the error in the size averaging?
+                    loss.backward()
+                    optimizer.step()
+                    epoch_loss += loss.item()
+                
+                avg_loss = epoch_loss/len(loader)
+                print(f"Epoch {epoch}, Loss: {avg_loss}")
+                
+                # Early stopping check
+                if best_loss == float('inf'):
+                    best_loss = avg_loss
+                    best_weights = self.linear.state_dict()
+                    patience_counter = 0
+                else:
+                    relative_improvement = (best_loss - avg_loss) / best_loss 
+                    print(f"Epoch {epoch}, Loss: {avg_loss}, Rel. Improvement: {relative_improvement}")
+                    if relative_improvement > self.tol:
+                        best_loss = avg_loss
+                        best_weights = self.linear.state_dict()
+                        patience_counter = 0
+                    else:
+                        patience_counter += 1
+                    
+                if patience_counter >= self.patience:
+                    print(f"Early stopping at epoch {epoch}")
+                    if best_weights is not None:
+                        self.linear.load_state_dict(best_weights)
+                    break
+
+        # Compute bias term
+        self.b = self.y_mean - (self.X_mean @ self.linear.weight.T) * self.y_std
+        return self
+
+
+    def forward(self, X: Tensor) -> Tensor:
+        return (self.linear(X-self.X_mean) * self.y_std) + self.b
+
+class LogisticRegressionAdam(FittableModule):
     def __init__(self, 
                  batch_size = 512,
                  num_epochs = 30,
                  lr = 0.01,):
-        super(LogisticRegressionSGD, self).__init__()
+        super(LogisticRegressionAdam, self).__init__()
         self.model = None
         self.batch_size = batch_size
         self.num_epochs = num_epochs
