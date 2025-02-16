@@ -158,12 +158,12 @@ class RidgeLBFGS(FittableModule):
         
         # Train
         with torch.enable_grad():
-            optimizer = torch.optim.LBFGS(self.linear.parameters(), lr=self.lr, max_iter=self.max_iter)
+            optimizer = torch.optim.LBFGS(self.linear.parameters(), lr=self.lr, max_iter=self.max_iter, history_size=20)
             def closure():
                 optimizer.zero_grad()
                 loss = torch.nn.functional.mse_loss(
-                    self.linear(X_centered), y_normalized
-                )
+                    self.linear(X_centered), y_normalized, reduction="sum"
+                ) / N
                 loss += self.l2_reg * torch.norm(self.linear.weight)**2
                 loss.backward()
                 print("loss", loss)
@@ -187,7 +187,7 @@ class RidgeLBFGS(FittableModule):
 
 
 
-class RidgeAdamW(FittableModule):
+class RidgeSGD(FittableModule):
     def __init__(self, 
                  l2_reg: float = 1e-1,
                  lr: float = 0.1,
@@ -195,14 +195,16 @@ class RidgeAdamW(FittableModule):
                  batch_size: int = 1000,
                  tol: float = 1e-4,  # Relative tolerance for early stopping
                  patience: int = 20,   # Number of epochs to wait for improvement
+                 AdamClass = torch.optim.Adam
                  ):
-        super(RidgeAdamW, self).__init__()
+        super(RidgeSGD, self).__init__()
         self.l2_reg = l2_reg
         self.lr = lr
         self.max_iter = max_iter
         self.batch_size = batch_size
         self.tol = tol
         self.patience = patience
+        self.AdamClass = AdamClass
     
     def fit(self, 
             X: Tensor,
@@ -240,7 +242,7 @@ class RidgeAdamW(FittableModule):
         
         # Train
         with torch.enable_grad():
-            optimizer = torch.optim.Adam(self.linear.parameters(), 
+            optimizer = self.AdamClass(self.linear.parameters(), 
                                         lr=self.lr, 
                                         weight_decay=2*self.l2_reg)
             
@@ -249,7 +251,7 @@ class RidgeAdamW(FittableModule):
                 for batch_X, batch_y in loader:
                     optimizer.zero_grad()
                     outputs = self.linear(batch_X)
-                    loss = torch.nn.functional.mse_loss(outputs, batch_y)  # todo is the error in the size averaging?
+                    loss = torch.nn.functional.mse_loss(outputs, batch_y, reduction="sum") / N
                     loss.backward()
                     optimizer.step()
                     epoch_loss += loss.item()

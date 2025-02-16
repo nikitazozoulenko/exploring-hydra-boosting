@@ -9,7 +9,7 @@ import torch.utils.data
 from torch import Tensor
 
 from models.sandwiched_least_squares import sandwiched_LS_dense, sandwiched_LS_diag, sandwiched_LS_scalar
-from models.base import FittableModule, RidgeModule, RidgeLBFGS, RidgeAdamW, FittableSequential, Identity, LogisticRegression
+from models.base import FittableModule, RidgeModule, RidgeLBFGS, RidgeSGD, FittableSequential, Identity, LogisticRegression
 
 
 
@@ -290,26 +290,34 @@ class HydraBoost(BaseGRFRBoost):
                  ridge_solver: Literal["solve", "LBFGS", "AdamW"] = "solve",
                  lr_ridge = 1,
                  max_iter_ridge = 300,
+                 sgd_batch_size = 128,
                  ):
         
+        AdamClass = None
         if ridge_solver.lower()=="solve".lower():
             RidgeClass = RidgeModule
         elif ridge_solver.lower()=="LBFGS".lower():
             RidgeClass = RidgeLBFGS
         elif ridge_solver.lower()=="AdamW".lower():
-            RidgeClass = RidgeAdamW
+            RidgeClass = RidgeSGD
+            AdamClass = torch.optim.AdamW
+        elif ridge_solver.lower()=="Adam".lower():
+            RidgeClass = RidgeSGD
+            AdamClass = torch.optim.Adam
         else:
             raise RuntimeError(f"Invalid argument for ridge_solver. Given: {ridge_solver}")
 
         initial_layer = InitialHydra(init_n_kernels, init_n_groups, max_num_channels, hydra_batch_size)
         top_level_regs = [RidgeClass(l2_reg, 
                                      lr=lr_ridge, 
-                                     max_iter=max_iter_ridge) 
+                                     max_iter=max_iter_ridge,
+                                     batch_size=sgd_batch_size) 
                           for _ in range(n_layers+1)]
         random_feature_layers = [HydraLayer(n_kernels, n_groups, max_num_channels, hydra_batch_size) for _ in range(n_layers)]
         ghat_boosting_layers = [GhatGradientLayerMSE(RidgeClass(l2_ghat,
                                                                 lr=lr_ridge,
-                                                                max_iter=max_iter_ridge)) 
+                                                                max_iter=max_iter_ridge,
+                                                                batch_size=sgd_batch_size)) 
                                 for _ in range(n_layers)]
         super(HydraBoost, self).__init__(
             n_layers, initial_layer, top_level_regs, random_feature_layers, ghat_boosting_layers, boost_lr, train_top_at, return_features
