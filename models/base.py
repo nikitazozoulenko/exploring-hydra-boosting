@@ -100,9 +100,10 @@ class RidgeModule(FittableModule):
         N, D = X.shape
         N, d = y.shape
         self.linear = nn.Linear(D, d, bias=False)
+        self.to(X.device)
         
         # Solve the ridge regression
-        A = X_centered.T @ X_centered + self.l2_reg * N * torch.eye(D, dtype=X.dtype, device=X.device)
+        A = X_centered.T @ X_centered + self.l2_reg * N * torch.eye(D, device=X.device)
         B = X_centered.T @ y_normalized
         self.linear.weight.data = torch.linalg.solve(A, B).T
         
@@ -113,11 +114,12 @@ class RidgeModule(FittableModule):
         print("self.X_mean", self.X_mean)
         print("self.y_mean", self.y_mean)
         print("self.y_std", self.y_std)
+        print("EXTRA", self.X_mean @ self.linear.weight.T * self.y_std)
         return self
     
     
     def forward(self, X: Tensor) -> Tensor:
-        return (self.linear(X-self.X_mean) * self.y_std) + self.b
+        return (self.linear(X) * self.y_std) + self.b
     
     
 
@@ -127,6 +129,7 @@ class RidgeLBFGS(FittableModule):
                  lr: float = 0.1,
                  max_iter: int = 300,
                  batch_size: int = 32,
+                 **kwargs
                  ):
         super(RidgeLBFGS, self).__init__()
         self.l2_reg = l2_reg
@@ -155,6 +158,7 @@ class RidgeLBFGS(FittableModule):
         self.linear = nn.Linear(D, d, bias=False)
         if init_top is not None:
             self.linear.weight.data = init_top.linear.weight.data.clone()
+        self.to(X.device)
         
         # Train
         with torch.enable_grad():
@@ -181,7 +185,7 @@ class RidgeLBFGS(FittableModule):
     
     
     def forward(self, X: Tensor) -> Tensor:
-        return (self.linear(X-self.X_mean) * self.y_std) + self.b
+        return (self.linear(X) * self.y_std) + self.b
 
 
 
@@ -195,7 +199,8 @@ class RidgeSGD(FittableModule):
                  batch_size: int = 1000,
                  tol: float = 1e-4,  # Relative tolerance for early stopping
                  patience: int = 20,   # Number of epochs to wait for improvement
-                 AdamClass = torch.optim.Adam
+                 AdamClass = torch.optim.Adam,
+                 **kwargs
                  ):
         super(RidgeSGD, self).__init__()
         self.l2_reg = l2_reg
@@ -226,6 +231,7 @@ class RidgeSGD(FittableModule):
         self.linear = nn.Linear(D, d, bias=False)
         if init_top is not None:
             self.linear.weight.data = init_top.linear.weight.data.clone()
+        self.to(X.device)
         
         # Create DataLoader
         dataset = torch.utils.data.TensorDataset(X_centered, y_normalized)
@@ -286,7 +292,9 @@ class RidgeSGD(FittableModule):
 
 
     def forward(self, X: Tensor) -> Tensor:
-        return (self.linear(X-self.X_mean) * self.y_std) + self.b
+        return (self.linear(X) * self.y_std) + self.b
+
+
 
 class LogisticRegressionAdam(FittableModule):
     def __init__(self, 

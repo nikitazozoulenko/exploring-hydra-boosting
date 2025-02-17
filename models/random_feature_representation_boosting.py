@@ -83,6 +83,7 @@ class BaseGRFRBoost(FittableModule):
             X (Tensor): Input data, shape (N, in_dim)
             y (Tensor): Targets, shape (N, d) for regression, TODO for classification. TODO check regression dimensions
         """
+        self.to(X.device)
         with torch.no_grad():
             # initial Phi_0 
             X0 = X
@@ -174,7 +175,8 @@ class HydraLayer(RandomFeatureLayer):
                 self.hydra = HydraGPU(X0.size(2), self.n_kernels, self.n_groups)
             else:
                 self.hydra = HydraMultivariateGPU(X0.size(2), D, self.n_kernels, self.n_groups, self.max_num_channels)
-
+            self.to(X0.device)
+            
             #fit robust sparse scaler after forwarding training data
             self.robust_scaler = RobustSparseScaler()
             feats = self._forward_no_scaler(X0)
@@ -311,13 +313,15 @@ class HydraBoost(BaseGRFRBoost):
         top_level_regs = [RidgeClass(l2_reg, 
                                      lr=lr_ridge, 
                                      max_iter=max_iter_ridge,
-                                     batch_size=sgd_batch_size) 
+                                     batch_size=sgd_batch_size,
+                                     AdamClass=AdamClass) 
                           for _ in range(n_layers+1)]
         random_feature_layers = [HydraLayer(n_kernels, n_groups, max_num_channels, hydra_batch_size) for _ in range(n_layers)]
         ghat_boosting_layers = [GhatGradientLayerMSE(RidgeClass(l2_ghat,
                                                                 lr=lr_ridge,
                                                                 max_iter=max_iter_ridge,
-                                                                batch_size=sgd_batch_size)) 
+                                                                batch_size=sgd_batch_size,
+                                                                AdamClass=AdamClass)) 
                                 for _ in range(n_layers)]
         super(HydraBoost, self).__init__(
             n_layers, initial_layer, top_level_regs, random_feature_layers, ghat_boosting_layers, boost_lr, train_top_at, return_features
