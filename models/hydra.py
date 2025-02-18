@@ -26,7 +26,6 @@ class RobustSparseScaler():
 
 
     def fit(self, X):
-        print("X", X)
         X = X.clamp(0).sqrt()
         self.epsilon = (X == 0).float().mean(0) ** self.exponent + 1e-6
         self.mu = X.mean(0)

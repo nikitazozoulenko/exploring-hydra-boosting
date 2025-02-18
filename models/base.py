@@ -109,12 +109,12 @@ class RidgeModule(FittableModule):
         
         # Compute bias term accounting for y's normalization
         self.b = self.y_mean - (self.X_mean @ self.linear.weight.T) * self.y_std
-        print("W", self.linear.weight)
-        print("b", self.b)
-        print("self.X_mean", self.X_mean)
-        print("self.y_mean", self.y_mean)
-        print("self.y_std", self.y_std)
-        print("EXTRA", self.X_mean @ self.linear.weight.T * self.y_std)
+        # print("W", self.linear.weight)
+        # print("b", self.b)
+        # print("self.X_mean", self.X_mean)
+        # print("self.y_mean", self.y_mean)
+        # print("self.y_std", self.y_std)
+        # print("EXTRA", self.X_mean @ self.linear.weight.T * self.y_std)
         return self
     
     
@@ -176,11 +176,11 @@ class RidgeLBFGS(FittableModule):
 
         # Compute bias term accounting for y's normalization
         self.b = self.y_mean - (self.X_mean @ self.linear.weight.T) * self.y_std
-        print("W", self.linear.weight)
-        print("b", self.b)
-        print("self.X_mean", self.X_mean)
-        print("self.y_mean", self.y_mean)
-        print("self.y_std", self.y_std)
+        # print("W", self.linear.weight)
+        # print("b", self.b)
+        # print("self.X_mean", self.X_mean)
+        # print("self.y_mean", self.y_mean)
+        # print("self.y_std", self.y_std)
         return self
     
     

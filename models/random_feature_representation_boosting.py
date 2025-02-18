@@ -287,7 +287,7 @@ class HydraBoost(BaseGRFRBoost):
                  l2_reg: float = 10,
                  l2_ghat: float = 10,
                  boost_lr: float = 0.1,
-                 train_top_at: List[int] = [0, 5, 10],
+                 train_top_at: List[int] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
                  return_features: bool = False,  #logits or features
                  ridge_solver: Literal["solve", "LBFGS", "AdamW"] = "solve",
                  lr_ridge = 1,
