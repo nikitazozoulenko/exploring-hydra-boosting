@@ -385,13 +385,13 @@ if __name__ == "__main__":
                             modelClass=HydraBoost,
                             model_param_grid={
                                 "n_layers": [0, 1, 3, 6],              # [0,1,3,6,10] ?
-                                "init_n_kernels": [3],
-                                "init_n_groups": [8],
-                                "n_kernels": [4],
-                                "n_groups": [8],
+                                "init_n_kernels": [8],
+                                "init_n_groups": [64],
+                                "n_kernels": [8],
+                                "n_groups": [64],
                                 "max_num_channels": [3],
-                                "hydra_batch_size": [10000],
-                                "l2_reg": [0.1, 1, 10, 100],                # [0.01, 0.1, 1, 10] ?
+                                "hydra_batch_size": [1024],
+                                "l2_reg": [0.01, 0.1, 1, 10, 100],                # [0.01, 0.1, 1, 10] ?
                                 "l2_ghat": [0.01, 0.1, 1, 10],          # [0.01, 0.1, 1, 10] ?
                                 "boost_lr": [0.5],
                             },
