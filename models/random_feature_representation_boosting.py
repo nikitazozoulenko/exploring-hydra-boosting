@@ -278,8 +278,8 @@ class GhatGradientLayerMSE(GhatBoostingLayer):
 class HydraBoost(BaseGRFRBoost):
     def __init__(self,
                  n_layers: int = 5,
-                 init_n_kernels = 16,
-                 init_n_groups = 16,
+                 init_n_kernels = 8,
+                 init_n_groups = 64,
                  n_kernels = 8,
                  n_groups = 64,
                  max_num_channels = 3,

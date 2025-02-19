@@ -167,7 +167,7 @@ class SKLearnWrapper(BaseEstimator, RegressorMixin):
     #         return acc.detach().cpu().item()
     
     
-class TSMLBaseWrapper(RegressorMixin, BaseTimeSeriesEstimator, abc):
+class TSMLBaseWrapper(RegressorMixin, BaseTimeSeriesEstimator):
     
     def __init__(self,
                  holdour_or_kfold: Literal["holdout", "kfold"] = "kfold",
@@ -243,7 +243,7 @@ class TSMLBaseWrapper(RegressorMixin, BaseTimeSeriesEstimator, abc):
         """
         X = torch.from_numpy(X).float()
         X = (X - self.X_mean) / self.X_std
-        pred = self.best_model.predict(X) #TODO regression only?
+        pred = self.best_model(X) #TODO regression only?
         pred = pred * self.y_std + self.y_mean
         return pred.squeeze().detach().cpu().numpy()
         
@@ -296,7 +296,7 @@ class TSMLGridSearchWrapper(TSMLBaseWrapper):
             verbose=self.verbose
         )
         grid_search.fit(X, y)
-        return grid_search.best_estimator_, grid_search.best_params_
+        return grid_search.best_estimator_.model, grid_search.best_params_
 
 
 
@@ -309,7 +309,7 @@ class TSMLGridSearchWrapper(TSMLBaseWrapper):
 
 def get_optuna_objective(
     trial,
-    ModelClass: Callable,
+    modelClass: Callable,
     get_optuna_params: Callable,
     X_train: Tensor,
     y_train: Tensor,
@@ -330,7 +330,7 @@ def get_optuna_objective(
             np.random.seed(seed)
             torch.manual_seed(seed)
             torch.cuda.manual_seed(seed)
-            model = ModelClass(**params)
+            model = modelClass(**params)
             model.fit(X_inner_train, y_inner_train)
 
             preds = model(X_inner_valid)
@@ -377,7 +377,7 @@ class TSMLOptunaWrapper(TSMLBaseWrapper):
         ):
         self.optuna_param_func = optuna_param_func
         self.n_trials = n_trials
-        super(TSMLGridSearchWrapper, self).__init__(
+        super(TSMLOptunaWrapper, self).__init__(
             holdour_or_kfold, kfolds, holdout_percentage, seed, device, modelClass,
         )
         
@@ -387,7 +387,7 @@ class TSMLOptunaWrapper(TSMLBaseWrapper):
         sampler = optuna.samplers.TPESampler(seed=self.seed)  # Make the sampler behave in a deterministic way.
         study = optuna.create_study(direction="minimize", sampler=sampler)
         objective = lambda trial: get_optuna_objective(
-            trial, self.ModelClass, get_optuna_hydraboost_params, 
+            trial, self.modelClass, get_optuna_hydraboost_params, 
             X, y, cv, self.seed, "regression"
             )
         study.optimize(objective, self.n_trials)
@@ -396,7 +396,7 @@ class TSMLOptunaWrapper(TSMLBaseWrapper):
         np.random.seed(self.seed)
         torch.manual_seed(self.seed)
         torch.cuda.manual_seed(self.seed)
-        model = self.ModelClass(**study.best_params)
+        model = self.modelClass(**study.best_params)
         model.fit(X, y)
         return model, study.best_params
         
@@ -495,6 +495,11 @@ def parse_args():
         type=str,
         default="optuna",
     )
+    parser.add_argument(
+        "--holdout_or_kfold",
+        type=str,
+        default="holdout",
+    )
     return parser.parse_args()
 
 
@@ -504,17 +509,17 @@ if __name__ == "__main__":
     
     if args.optuna_or_gridsearch == "optuna":
         regressor = TSMLOptunaWrapper(
-            holdour_or_kfold="holdout",
+            holdour_or_kfold=args.holdout_or_kfold,
             kfolds=5,
             holdout_percentage=0.2,
             seed=args.seed,
             device=args.device,
             modelClass=HydraBoost,
-            n_trials=10,
+            n_trials=100,
         )
     else:
         regressor = TSMLGridSearchWrapper(
-            holdour_or_kfold="holdout",
+            holdour_or_kfold=args.holdout_or_kfold,
             kfolds=5,
             holdout_percentage=0.2,
             seed=args.seed,
@@ -522,12 +527,6 @@ if __name__ == "__main__":
             modelClass=HydraBoost,
             model_param_grid={
                 "n_layers": [0, 1, 3, 6],       
-                "init_n_kernels": [8],
-                "init_n_groups": [64],
-                "n_kernels": [8],
-                "n_groups": [64],
-                "max_num_channels": [3],
-                "hydra_batch_size": [1024],
                 "l2_reg": [0.01, 0.1, 1, 10, 100],            
                 "l2_ghat": [0.01, 0.1, 1, 10],         
                 "boost_lr": [0.5],
@@ -536,6 +535,8 @@ if __name__ == "__main__":
     
     for ID in args.dataset_indices:
         for resample_id in args.resample_ids:
+            print(args.TSER_dir)
+            print(args.results_dir)
             test_regressor(
                 regressor_name = "HydraBoostGridSearchHoldout",
                 regressor = regressor,
