@@ -92,8 +92,6 @@ class BaseGRFRBoost(FittableModule):
             # Create top level regressor or classifier W_0
             if 0 in self.train_top_at:
                 self.top_level_modules[0].fit(X, y)
-                print("training W0")
-                print("Phi0 shape", X.shape)
 
             # Feature boost
             for t in range(self.n_layers):

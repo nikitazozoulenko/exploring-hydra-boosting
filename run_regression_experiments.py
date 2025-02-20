@@ -111,7 +111,7 @@ class SKLearnWrapper(BaseEstimator, RegressorMixin):
         return params
     
     
-    def fit(self, X, y):
+    def fit(self, X:Tensor, y:Tensor):
         if self.seed is not None:
             np.random.seed(self.seed)
             torch.manual_seed(self.seed)
@@ -126,8 +126,8 @@ class SKLearnWrapper(BaseEstimator, RegressorMixin):
         return self
 
 
-    def predict(self, X):
-        return self.model(X).squeeze()#.detach().cpu().squeeze().numpy()
+    def predict(self, X:Tensor):
+        return self.model(X)
         # #binary classification
         # if len(self.classes_) == 2:
         #     proba_1 = torch.sigmoid(self.model(X))
@@ -153,18 +153,22 @@ class SKLearnWrapper(BaseEstimator, RegressorMixin):
 
 
     
-    # def score(self, X, y):
-    #     logits = self.model(X)
-    #     if y.size(1) == 1:
-    #         y_true = y.detach().cpu().numpy()
-    #         y_score = logits.detach().cpu().numpy()
-    #         auc = roc_auc_score(y_true, y_score)
-    #         return auc
-    #     else:
-    #         pred = torch.argmax(logits, dim=1)
-    #         y = torch.argmax(y, dim=1)
-    #         acc = (pred == y).float().mean()
-    #         return acc.detach().cpu().item()
+    def score(self, X:Tensor, y:Tensor):
+        with torch.no_grad():
+            y_pred = self.model(X)
+            mse = torch.nn.functional.mse_loss(y_pred, y)
+            return -mse.detach().cpu().item()  # Return negative MSE since sklearn maximizes scores TODO only regression for now
+        # logits = self.model(X)
+        # if y.size(1) == 1:
+        #     y_true = y.detach().cpu().numpy()
+        #     y_score = logits.detach().cpu().numpy()
+        #     auc = roc_auc_score(y_true, y_score)
+        #     return auc
+        # else:
+        #     pred = torch.argmax(logits, dim=1)
+        #     y = torch.argmax(y, dim=1)
+        #     acc = (pred == y).float().mean()
+        #     return acc.detach().cpu().item()
     
     
 class TSMLBaseWrapper(RegressorMixin, BaseTimeSeriesEstimator):
@@ -241,7 +245,7 @@ class TSMLBaseWrapper(RegressorMixin, BaseTimeSeriesEstimator):
         y : array-like of shape (n_instances)
             Predicted target labels.
         """
-        X = torch.from_numpy(X).float()
+        X = torch.from_numpy(X).float().to(self.device)
         X = (X - self.X_mean) / self.X_std
         pred = self.best_model(X) #TODO regression only?
         pred = pred * self.y_std + self.y_mean
@@ -277,7 +281,7 @@ class TSMLGridSearchWrapper(TSMLBaseWrapper):
                     device: str = "cpu",
                     modelClass=None, 
                     model_param_grid: Dict[str, List[Any]] = {},
-                    verbose:int = 1,  # 0 1 2
+                    verbose:int = 2,  # 0 1 2
             ):
         self.model_param_grid = model_param_grid
         self.verbose = verbose
@@ -292,7 +296,6 @@ class TSMLGridSearchWrapper(TSMLBaseWrapper):
             estimator=SKLearnWrapper(modelClass=self.modelClass),
             param_grid={**self.model_param_grid, "seed": [self.seed]},
             cv=cv,
-            scoring="neg_mean_squared_error", # TODO regression only currently???
             verbose=self.verbose
         )
         grid_search.fit(X, y)
@@ -400,7 +403,10 @@ class TSMLOptunaWrapper(TSMLBaseWrapper):
         model.fit(X, y)
         return model, study.best_params
         
-        
+
+########################################
+## tsml wrapper
+########################################
 
 def test_regressor(
         regressor_name, # = "HydraBoost",
@@ -526,9 +532,9 @@ if __name__ == "__main__":
             device=args.device,
             modelClass=HydraBoost,
             model_param_grid={
-                "n_layers": [0, 1, 3, 6],       
-                "l2_reg": [0.01, 0.1, 1, 10, 100],            
-                "l2_ghat": [0.01, 0.1, 1, 10],         
+                "n_layers": [0, 1, 3, 6],
+                "l2_reg": [100, 10, 1, 0.1, 0.01, 0.001],
+                "l2_ghat": [0.001],
                 "boost_lr": [0.5],
             },
         )
