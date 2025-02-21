@@ -273,7 +273,7 @@ class GhatGradientLayerMSE(GhatBoostingLayer):
 ############################################################################
 
 
-class HydraBoost(BaseGRFRBoost):
+class HydraFeatureBoost(BaseGRFRBoost):
     def __init__(self,
                  n_layers: int = 5,
                  init_n_kernels = 8,
@@ -321,7 +321,7 @@ class HydraBoost(BaseGRFRBoost):
                                                                 batch_size=sgd_batch_size,
                                                                 AdamClass=AdamClass)) 
                                 for _ in range(n_layers)]
-        super(HydraBoost, self).__init__(
+        super(HydraFeatureBoost, self).__init__(
             n_layers, initial_layer, top_level_regs, random_feature_layers, ghat_boosting_layers, boost_lr, train_top_at, return_features
         )
 
