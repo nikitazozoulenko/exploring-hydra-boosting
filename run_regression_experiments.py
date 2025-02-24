@@ -17,7 +17,7 @@ from sklearn.metrics import roc_auc_score
 import optuna
 
 from models.random_feature_representation_boosting import HydraFeatureBoost
-from models.label_space_boost import HydraLabelBoost
+from models.label_space_boost import HydraLabelBoost, HydraLabelReuseBoost
 from models.naive import NaiveMean
 from load_datasets import get_aeon_dataset
 
@@ -360,20 +360,30 @@ def get_optuna_objective(
     
 
 
+    
 def get_optuna_hydrafeatureboost_params(trial: optuna.Trial) -> Dict[str, Any]:
     return {
-        "n_layers": trial.suggest_int("n_layers", 0, 10),
-        "l2_reg": trial.suggest_float("l2_reg", 0.1, 10000, log=True),
+        "n_layers": trial.suggest_int("n_layers", 0, 9),
+        "l2_reg": trial.suggest_float("l2_reg", 0.1, 1000, log=True),
         "l2_ghat": trial.suggest_float("l2_ghat", 0.01, 100, log=True),
         "boost_lr": trial.suggest_float("boost_lr", 0.1, 1.0),
     }
+
+
+def get_optuna_hydra_params(trial: optuna.Trial) -> Dict[str, Any]:
+    return {
+        "n_estimators": trial.suggest_categorical("n_estimators", [1]),
+        "l2_reg": trial.suggest_float("l2_reg", 0.1, 1000, log=True),
+    }
+    
     
 def get_optuna_hydralabelboost_params(trial: optuna.Trial) -> Dict[str, Any]:
     return {
-        "n_estimators": trial.suggest_int("n_estimators", 1, 11),
-        "l2_reg": trial.suggest_float("l2_reg", 0.1, 10000, log=True),
+        "n_estimators": trial.suggest_int("n_estimators", 1, 10),
+        "l2_reg": trial.suggest_float("l2_reg", 0.1, 1000, log=True),
         "boost_lr": trial.suggest_float("boost_lr", 0.1, 1.0),
     }
+    
     
 def get_optuna_naivemean_params(trial: optuna.Trial) -> Dict[str, Any]:
     return {}
@@ -530,58 +540,74 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     
-    #get model param grids for gridsearch
-    if "HydraFeatureBoost" in args.models:
-        modelClass=HydraFeatureBoost
-        optuna_param_func = get_optuna_hydrafeatureboost_params
-        param_grid={
-                "n_layers": [0, 1, 3, 6],
-                "l2_reg": [100, 10, 1, 0.1, 0.01, 0.001],
-                "l2_ghat": [0.001],
-                "boost_lr": [0.5],
-            },
-    elif "HydraLabelBoost" in args.models:
-        modelClass=HydraLabelBoost
-        optuna_param_func = get_optuna_hydralabelboost_params
-        param_grid={
-                "n_layers": [0, 1, 3, 6],
-                "l2_reg": [100, 10, 1, 0.1, 0.01, 0.001],
-                "boost_lr": [0.5],
-            }
-    elif "NaiveMean" in args.models:
-        modelClass=NaiveMean
-        optuna_param_func = get_optuna_naivemean_params
-        param_grid={}
-    else:
-        raise ValueError(f"Invalid model name given: {args.models}")
-    
-    
-    # select the correct wrapper for optuna or gridsearch
-    if args.optuna_or_gridsearch == "optuna":
-        regressor = TSMLOptunaWrapper(   # TODO make this work for other models too... need to specify the optuna_param_func
-            holdour_or_kfold=args.holdout_or_kfold,
-            kfolds=5,
-            holdout_percentage=0.2,
-            seed=args.seed,
-            device=args.device,
-            modelClass=modelClass,
-            optuna_param_func=optuna_param_func,
-            n_trials=args.n_optuna_trials,
-        )
-    else:
-        regressor = TSMLGridSearchWrapper(
-            holdour_or_kfold=args.holdout_or_kfold,
-            kfolds=5,
-            holdout_percentage=0.2,
-            seed=args.seed,
-            device=args.device,
-            modelClass=modelClass,
-            model_param_grid=param_grid,
-        )
-    
-    
-    #run experiments
     for model_name in args.models:
+        #get model param grids for gridsearch and optuna ranges
+        if "Hydra"==model_name:
+            modelClass=HydraLabelBoost
+            optuna_param_func = get_optuna_hydra_params
+            param_grid={
+                    "n_estimators": [1],
+                    "l2_reg": [1000, 100, 10, 1, 0.1],
+                }
+        elif "HydraFeatureBoost" in model_name:
+            modelClass=HydraFeatureBoost
+            optuna_param_func = get_optuna_hydrafeatureboost_params
+            param_grid={
+                    "n_layers": [0, 1, 3, 6, 10],
+                    "l2_reg": [1000, 100, 10, 1, 0.1],
+                    "l2_ghat": [0.01],
+                    "boost_lr": [0.5],
+                },
+        elif ("HydraLabelBoost" in model_name) or ("HydraLabelReuseBoost" in model_name):
+            modelClass=HydraLabelBoost if "HydraLabelBoost" in model_name else HydraLabelReuseBoost
+            optuna_param_func = get_optuna_hydralabelboost_params
+            param_grid={
+                    "n_layers": [0, 1, 3, 6, 10],
+                    "l2_reg": [1000, 100, 10, 1, 0.1],
+                    "boost_lr": [0.5],
+                }
+        elif "NaiveMean" in model_name:
+            modelClass=NaiveMean
+            optuna_param_func = get_optuna_naivemean_params
+            param_grid={}
+        else:
+            raise ValueError(f"Invalid model name given: {model_name}")
+        
+        
+        # select the correct wrapper for optuna or gridsearch
+        if args.optuna_or_gridsearch == "optuna":
+            regressor = TSMLOptunaWrapper(
+                holdour_or_kfold=args.holdout_or_kfold,
+                kfolds=5,
+                holdout_percentage=0.2,
+                seed=args.seed,
+                device=args.device,
+                modelClass=modelClass,
+                optuna_param_func=optuna_param_func,
+                n_trials=args.n_optuna_trials,
+            )
+        else:
+            regressor = TSMLGridSearchWrapper(
+                holdour_or_kfold=args.holdout_or_kfold,
+                kfolds=5,
+                holdout_percentage=0.2,
+                seed=args.seed,
+                device=args.device,
+                modelClass=modelClass,
+                model_param_grid=param_grid,
+            )
+        
+        #modify name based on optuna or gridsearch
+        if args.optuna_or_gridsearch == "optuna":
+            model_name = model_name + "_O"
+        else:
+            model_name = model_name + "_GS" 
+        if args.holdout_or_kfold == "holdout":
+            model_name = model_name + "H"
+        else:
+            model_name = model_name + "CV"
+    
+        #run experiments
         for dataset_idx in args.dataset_indices:
             for resample_id in args.resample_ids:
                 print(args.TSER_dir)

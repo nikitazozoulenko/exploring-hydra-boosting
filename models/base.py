@@ -107,19 +107,20 @@ class RidgeModule(FittableModule):
         B = X_centered.T @ y_normalized
         self.linear.weight.data = torch.linalg.solve(A, B).T
         
-        # Compute bias term accounting for y's normalization
-        self.b = self.y_mean - (self.X_mean @ self.linear.weight.T) * self.y_std
         # print("W", self.linear.weight)
         # print("b", self.b)
         # print("self.X_mean", self.X_mean)
         # print("self.y_mean", self.y_mean)
         # print("self.y_std", self.y_std)
         # print("EXTRA", self.X_mean @ self.linear.weight.T * self.y_std)
+        # Absorb y_std into weights and bias
+        self.linear.weight.data *= self.y_std.T
+        self.b = self.y_mean - (self.X_mean @ self.linear.weight.T)
         return self
-    
-    
+
+
     def forward(self, X: Tensor) -> Tensor:
-        return (self.linear(X) * self.y_std) + self.b
+        return self.linear(X) + self.b
     
     
 
@@ -174,18 +175,14 @@ class RidgeLBFGS(FittableModule):
                 return loss
             optimizer.step(closure)
 
-        # Compute bias term accounting for y's normalization
-        self.b = self.y_mean - (self.X_mean @ self.linear.weight.T) * self.y_std
-        # print("W", self.linear.weight)
-        # print("b", self.b)
-        # print("self.X_mean", self.X_mean)
-        # print("self.y_mean", self.y_mean)
-        # print("self.y_std", self.y_std)
+        # Absorb y_std into weights and bias
+        self.linear.weight.data *= self.y_std.T
+        self.b = self.y_mean - (self.X_mean @ self.linear.weight.T)
         return self
-    
-    
+
+
     def forward(self, X: Tensor) -> Tensor:
-        return (self.linear(X) * self.y_std) + self.b
+        return self.linear(X) + self.b
 
 
 
@@ -286,13 +283,14 @@ class RidgeSGD(FittableModule):
                         self.linear.load_state_dict(best_weights)
                     break
 
-        # Compute bias term
-        self.b = self.y_mean - (self.X_mean @ self.linear.weight.T) * self.y_std
+        # Absorb y_std into weights and bias
+        self.linear.weight.data *= self.y_std.T
+        self.b = self.y_mean - (self.X_mean @ self.linear.weight.T)
         return self
 
 
     def forward(self, X: Tensor) -> Tensor:
-        return (self.linear(X) * self.y_std) + self.b
+        return self.linear(X) + self.b
 
 
 
