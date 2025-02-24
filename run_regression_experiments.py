@@ -16,7 +16,9 @@ from sklearn.base import BaseEstimator, RegressorMixin, ClassifierMixin
 from sklearn.metrics import roc_auc_score
 import optuna
 
-from models.random_feature_representation_boosting import HydraBoost
+from models.random_feature_representation_boosting import HydraFeatureBoost
+from models.label_space_boost import HydraLabelBoost
+from models.naive import NaiveMean
 from load_datasets import get_aeon_dataset
 
 #ranked approximately by memory size (N_train * D * T) of each dataset 
@@ -358,13 +360,23 @@ def get_optuna_objective(
     
 
 
-def get_optuna_hydraboost_params(trial: optuna.Trial) -> Dict[str, Any]:
+def get_optuna_hydrafeatureboost_params(trial: optuna.Trial) -> Dict[str, Any]:
     return {
         "n_layers": trial.suggest_int("n_layers", 0, 10),
         "l2_reg": trial.suggest_float("l2_reg", 0.001, 1000, log=True),
         "l2_ghat": trial.suggest_float("l2_ghat", 0.001, 1000, log=True),
         "boost_lr": trial.suggest_float("boost_lr", 0.1, 1.0),
     }
+    
+def get_optuna_hydralabelboost_params(trial: optuna.Trial) -> Dict[str, Any]:
+    return {
+        "n_estimators": trial.suggest_int("n_estimators", 1, 11),
+        "l2_reg": trial.suggest_float("l2_reg", 0.001, 1000, log=True),
+        "boost_lr": trial.suggest_float("boost_lr", 0.1, 1.0),
+    }
+    
+def get_optuna_naivemean_params(trial: optuna.Trial) -> Dict[str, Any]:
+    return {}
 
 
 class TSMLOptunaWrapper(TSMLBaseWrapper):
@@ -373,9 +385,9 @@ class TSMLOptunaWrapper(TSMLBaseWrapper):
                  kfolds: Optional[int] = 5,
                  holdout_percentage: Optional[float] = 0.2,
                  seed: Optional[int] = None,
-                 modelClass = None, 
-                 device: str = "cpu",
+                 modelClass = None,
                  optuna_param_func: Callable = None,
+                 device: str = "cpu",
                  n_trials: int = 100,
         ):
         self.optuna_param_func = optuna_param_func
@@ -390,7 +402,7 @@ class TSMLOptunaWrapper(TSMLBaseWrapper):
         sampler = optuna.samplers.TPESampler(seed=self.seed)  # Make the sampler behave in a deterministic way.
         study = optuna.create_study(direction="minimize", sampler=sampler)
         objective = lambda trial: get_optuna_objective(
-            trial, self.modelClass, get_optuna_hydraboost_params, 
+            trial, self.modelClass, self.optuna_param_func, 
             X, y, cv, self.seed, "regression"
             )
         study.optimize(objective, self.n_trials)
@@ -450,13 +462,13 @@ def test_regressor(
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Run experiments with different models and datasets.")
-    # parser.add_argument(
-    #     "--models", 
-    #     nargs='+', 
-    #     type=str, 
-    #     default=["HydraBoost"], 
-    #     help="List of model names to run."
-    # )
+    parser.add_argument(
+        "--models", 
+        nargs='+', 
+        type=str, 
+        default=["HydraFeatureBoost", "HydraLabelBoost", "NaiveMean"], 
+        help="List of model names to run."
+    )
     parser.add_argument(
         "--dataset_indices", 
         nargs='+', 
@@ -506,6 +518,11 @@ def parse_args():
         type=str,
         default="holdout",
     )
+    parser.add_argument(
+        "--n_optuna_trials",
+        type=int,
+        default=100,
+    )
     return parser.parse_args()
 
 
@@ -513,15 +530,43 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     
+    #get model param grids for gridsearch
+    if "HydraFeatureBoost" in args.models:
+        modelClass=HydraFeatureBoost
+        optuna_param_func = get_optuna_hydrafeatureboost_params
+        param_grid={
+                "n_layers": [0, 1, 3, 6],
+                "l2_reg": [100, 10, 1, 0.1, 0.01, 0.001],
+                "l2_ghat": [0.001],
+                "boost_lr": [0.5],
+            },
+    elif "HydraLabelBoost" in args.models:
+        modelClass=HydraLabelBoost
+        optuna_param_func = get_optuna_hydralabelboost_params
+        param_grid={
+                "n_layers": [0, 1, 3, 6],
+                "l2_reg": [100, 10, 1, 0.1, 0.01, 0.001],
+                "boost_lr": [0.5],
+            }
+    elif "NaiveMean" in args.models:
+        modelClass=NaiveMean
+        optuna_param_func = get_optuna_naivemean_params
+        param_grid={}
+    else:
+        raise ValueError(f"Invalid model name given: {args.models}")
+    
+    
+    # select the correct wrapper for optuna or gridsearch
     if args.optuna_or_gridsearch == "optuna":
-        regressor = TSMLOptunaWrapper(
+        regressor = TSMLOptunaWrapper(   # TODO make this work for other models too... need to specify the optuna_param_func
             holdour_or_kfold=args.holdout_or_kfold,
             kfolds=5,
             holdout_percentage=0.2,
             seed=args.seed,
             device=args.device,
-            modelClass=HydraBoost,
-            n_trials=100,
+            modelClass=modelClass,
+            optuna_param_func=optuna_param_func,
+            n_trials=args.n_optuna_trials,
         )
     else:
         regressor = TSMLGridSearchWrapper(
@@ -530,24 +575,22 @@ if __name__ == "__main__":
             holdout_percentage=0.2,
             seed=args.seed,
             device=args.device,
-            modelClass=HydraBoost,
-            model_param_grid={
-                "n_layers": [0, 1, 3, 6],
-                "l2_reg": [100, 10, 1, 0.1, 0.01, 0.001],
-                "l2_ghat": [0.001],
-                "boost_lr": [0.5],
-            },
+            modelClass=modelClass,
+            model_param_grid=param_grid,
         )
     
-    for ID in args.dataset_indices:
-        for resample_id in args.resample_ids:
-            print(args.TSER_dir)
-            print(args.results_dir)
-            test_regressor(
-                regressor_name = "HydraBoostGridSearchHoldout",
-                regressor = regressor,
-                dataset_name = TSER_datasets[ID],
-                TSER_data_dir = Path(args.TSER_dir),
-                results_dir = Path(args.results_dir),
-                resample_id=resample_id,
-            )
+    
+    #run experiments
+    for model_name in args.models:
+        for dataset_idx in args.dataset_indices:
+            for resample_id in args.resample_ids:
+                print(args.TSER_dir)
+                print(args.results_dir)
+                test_regressor(
+                    regressor_name = model_name,
+                    regressor = regressor,
+                    dataset_name = TSER_datasets[dataset_idx],
+                    TSER_data_dir = Path(args.TSER_dir),
+                    results_dir = Path(args.results_dir),
+                    resample_id=resample_id,
+                )
