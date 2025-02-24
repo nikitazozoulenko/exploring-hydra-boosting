@@ -355,7 +355,7 @@ def get_optuna_objective(
 
         return np.mean(scores)
     except (RuntimeError, ValueError, torch._C._LinAlgError) as e:
-        print(f"Error encountered during training: {e}. Returning score 2.0 to optuna")
+        print(f"Error encountered during training: {e}")
         return 10.0 #rmse random guessing is 1.0, and random guessing accuracy is -1/C
     
 
@@ -363,15 +363,15 @@ def get_optuna_objective(
 def get_optuna_hydrafeatureboost_params(trial: optuna.Trial) -> Dict[str, Any]:
     return {
         "n_layers": trial.suggest_int("n_layers", 0, 10),
-        "l2_reg": trial.suggest_float("l2_reg", 0.001, 1000, log=True),
-        "l2_ghat": trial.suggest_float("l2_ghat", 0.001, 1000, log=True),
+        "l2_reg": trial.suggest_float("l2_reg", 0.1, 10000, log=True),
+        "l2_ghat": trial.suggest_float("l2_ghat", 0.01, 100, log=True),
         "boost_lr": trial.suggest_float("boost_lr", 0.1, 1.0),
     }
     
 def get_optuna_hydralabelboost_params(trial: optuna.Trial) -> Dict[str, Any]:
     return {
         "n_estimators": trial.suggest_int("n_estimators", 1, 11),
-        "l2_reg": trial.suggest_float("l2_reg", 0.001, 1000, log=True),
+        "l2_reg": trial.suggest_float("l2_reg", 0.1, 10000, log=True),
         "boost_lr": trial.suggest_float("boost_lr", 0.1, 1.0),
     }
     
