@@ -17,7 +17,7 @@ from sklearn.metrics import roc_auc_score
 import optuna
 
 from models.random_feature_representation_boosting import HydraFeatureBoost
-from models.label_space_boost import HydraLabelBoost, HydraLabelReuseBoost
+from models.label_space_boost import HydraLabelBoost, HydraLabelReuseBoost, HydraEnsemble
 from models.naive import NaiveMean
 from load_datasets import get_aeon_dataset
 
@@ -377,6 +377,14 @@ def get_optuna_hydra_params(trial: optuna.Trial) -> Dict[str, Any]:
     }
     
     
+def get_optuna_hydraensemble_params(trial: optuna.Trial) -> Dict[str, Any]:
+    return {
+        "n_estimators": trial.suggest_categorical("n_estimators", [10]),
+        "l2_reg": trial.suggest_float("l2_reg", 0.1, 1000, log=True),
+    }
+    
+    
+    
 def get_optuna_hydralabelboost_params(trial: optuna.Trial) -> Dict[str, Any]:
     return {
         "n_estimators": trial.suggest_int("n_estimators", 1, 10),
@@ -547,6 +555,13 @@ if __name__ == "__main__":
             optuna_param_func = get_optuna_hydra_params
             param_grid={
                     "n_estimators": [1],
+                    "l2_reg": [1000, 100, 10, 1, 0.1],
+                }
+        elif "HydraEnsemble" in model_name:
+            modelClass=HydraEnsemble
+            optuna_param_func = get_optuna_hydraensemble_params
+            param_grid={
+                    "n_estimators": [10],
                     "l2_reg": [1000, 100, 10, 1, 0.1],
                 }
         elif "HydraFeatureBoost" in model_name:

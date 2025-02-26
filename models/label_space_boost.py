@@ -43,7 +43,7 @@ class HydraLabelBoost(FittableModule):
                  lr_ridge = 1,
                  max_iter_ridge = 300,
                  sgd_batch_size = 128,
-                 find_amount_of_say = False,
+                 find_amount_of_say = True,
                  ):
         super(FittableModule, self).__init__()
         self.n_estimators = n_estimators
@@ -114,7 +114,7 @@ class HydraLabelReuseBoost(FittableModule):
                  lr_ridge = 1,
                  max_iter_ridge = 300,
                  sgd_batch_size = 128,
-                 find_amount_of_say = False,
+                 find_amount_of_say = True,
                  ):
         super(FittableModule, self).__init__()
         self.n_estimators = n_estimators
@@ -163,4 +163,57 @@ class HydraLabelReuseBoost(FittableModule):
     def forward(self, X: Tensor):
         with torch.no_grad():
             return self.reg1(self.hydra(X))
+
+            
+            
+###########################
+### now simply ensemble ###
+###########################
+
+class HydraEnsemble(FittableModule):
+    def __init__(self,
+                 n_estimators: int = 5,
+                 n_kernels = 8,
+                 n_groups = 64,
+                 max_num_channels = 3,
+                 hydra_batch_size = 512,
+                 l2_reg: float = 10,
+                 ridge_solver: Literal["solve", "LBFGS", "AdamW"] = "solve",
+                 lr_ridge = 1,
+                 max_iter_ridge = 300,
+                 sgd_batch_size = 128,
+                 ):
+        super(FittableModule, self).__init__()
+        self.n_estimators = n_estimators
+        assert n_estimators > 0
+        self.hydras = nn.ModuleList([HydraLabelBoost(n_estimators=1,
+                                                     n_kernels=n_kernels,
+                                                     n_groups=n_groups,
+                                                     max_num_channels=max_num_channels,
+                                                     hydra_batch_size=hydra_batch_size,
+                                                     l2_reg=l2_reg,
+                                                     ridge_solver=ridge_solver,
+                                                     lr_ridge=lr_ridge,
+                                                     max_iter_ridge=max_iter_ridge,
+                                                     sgd_batch_size=sgd_batch_size
+                                                     ) 
+                                     for _ in range(n_estimators)])
+        
+        
+    def fit_transform(self, X: Tensor, y: Tensor):
+        with torch.no_grad():
+            pred = self.hydras[0].fit_transform(X, y)
+            
+            for i in range(1, self.n_estimators):
+                pred += self.hydras[i].fit_transform(X, y)
+            return pred / self.n_estimators
+    
+        
+    def forward(self, X: Tensor):
+        with torch.no_grad():
+            pred = self.hydras[0](X)
+            
+            for i in range(1, self.n_estimators):
+                pred += self.hydras[i](X)
+            return pred / self.n_estimators
             
